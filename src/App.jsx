@@ -338,23 +338,39 @@ function LoginScreen({ users, onLogin }) {
     return !Object.keys(errs).length;
   };
 
-  const handleSubmit = (e) => {
-    e?.preventDefault();
+  const handleSubmit = async (e) => {
+    e.preventDefault();
     if (blocked || !validate()) return;
 
-    // Busca o usuário na lista pelo e-mail
-    const found = users.find(u => u.username === email && u.active);
-    // Aceita Demo@1234 ou "********" como senha válida no protótipo
-    const passwordOk = password === 'Demo@1234' || password === '********';
+    try {
+      // Faz a chamada real para a nossa API enviando o que o usuário digitou
+      const resposta = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          email: email,    // Pega a variável de email do seu React
+          senha: password  // Pega a variável de password do seu React
+        })
+      });
 
-    if (!found || !passwordOk) {
-      setAttempts(a => a + 1);
-      setLoginError(`Credenciais inválidas ou usuário inativo. Tentativa ${attempts + 1}/5.`);
-      return;
+      const dados = await resposta.json();
+
+      // Se a API responder com sucesso (encontrou no banco)
+      if (resposta.ok && dados.sucesso) {
+        setLoginError('');
+        // Passamos o nome do usuário que veio do banco para o restante do app
+        onLogin({ name: dados.usuario, role: 'user' }); 
+      } else {
+        // Se a API não encontrou ou a senha tá errada
+        setAttempts(a => a + 1);
+        setLoginError(dados.erro || `Credenciais inválidas. Tentativa ${attempts + 1}/5.`);
+      }
+
+    } catch (error) {
+      setLoginError('Erro ao conectar com o servidor.');
     }
-
-    setLoginError('');
-    onLogin(found); // passa o objeto completo — role, name, etc.
   };
 
   return (
