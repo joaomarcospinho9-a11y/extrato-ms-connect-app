@@ -4,8 +4,9 @@ import {
   Search, Filter, Download, CheckCircle2, AlertCircle, TrendingUp, DollarSign,
   FileText, ChevronLeft, ChevronRight, ShieldCheck, Menu, X, Eye, EyeOff,
   UserPlus, Trash2, Edit2, Save, XCircle, AlertTriangle, Target, PlusCircle,
-  BarChart3, Settings, Tag, Clock, History, FileDown, Plus, Minus
+  BarChart3, Tag, Clock, History, FileDown, Plus
 } from 'lucide-react';
+// CORRIGIDO #19: Removidos imports 'Settings' e 'Minus' que não eram utilizados em nenhum lugar do código.
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTES GLOBAIS
@@ -117,9 +118,36 @@ const MOCK_HISTORIC_DATA = [
   { month: 'Dez', value: 250000 }, { month: 'Jan', value: 240000 },
 ];
 
+// CORRIGIDO #20: Dados mock fixos para evitar re-renders causados por Math.random() dentro de useMemo.
+// Antes, generateMockTableData() usava Math.random(), o que fazia os dados mudarem a cada reavaliação.
+const MOCK_TABLE_DATA = Array.from({ length: 50 }, (_, i) => {
+  const statusOpts = ['OK', 'OK', 'OK', 'OK', 'Divergente'];
+  const status = statusOpts[i % statusOpts.length];
+  return {
+    ID: `TRX-${1000 + i + 1}`,
+    Consultor: `Consultor ${(i % 20) + 1}`,
+    Cliente: `Empresa Parceira ${String.fromCharCode(65 + (i % 26))} LTDA`,
+    Produto: i % 3 === 0 ? 'Plano LD VIP' : 'Banda Larga Fibra',
+    'Valor Prévia': ((i + 1) * 9.87).toFixed(2),
+    'Valor Extrato': status === 'OK' ? '-' : ((i + 1) * 7.43).toFixed(2),
+    Status: status,
+    _motivo: status === 'Divergente' ? 'Valor Inferior' : null,
+  };
+});
+
 // ═══════════════════════════════════════════════════════════════
 // UTILITÁRIOS
 // ═══════════════════════════════════════════════════════════════
+
+// CORRIGIDO #10: Adicionada sanitização de CSV Injection.
+// Células que iniciam com =, +, -, @ são prefixadas com apóstrofo para evitar
+// execução de fórmulas caso o CSV seja aberto em Excel/Sheets.
+const sanitizeCSVCell = (val) => {
+  if (typeof val === 'string' && /^[=+\-@]/.test(val)) {
+    return "'" + val;
+  }
+  return val;
+};
 
 const parseCSV = (text) => {
   const lines = text.split('\n');
@@ -131,7 +159,10 @@ const parseCSV = (text) => {
     if (!lines[i].trim()) continue;
     const values = lines[i].match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || lines[i].split(',');
     const row = {};
-    headers.forEach((h, idx) => { row[h] = values[idx] ? values[idx].replace(/["\r]/g, '').trim() : ''; });
+    headers.forEach((h, idx) => {
+      const raw = values[idx] ? values[idx].replace(/["\r]/g, '').trim() : '';
+      row[h] = sanitizeCSVCell(raw); // CORRIGIDO #10
+    });
     row._status = Math.random() > 0.85 ? 'divergente' : 'ok';
     if (row._status === 'divergente') row._motivo = Math.random() > 0.5 ? 'Valor Inferior' : 'Venda Não Paga';
     data.push(row);
@@ -153,37 +184,63 @@ const downloadTemplate = (type) => {
   URL.revokeObjectURL(url);
 };
 
-function generateMockTableData() {
-  const statusOpts = ['OK', 'OK', 'OK', 'OK', 'Divergente'];
-  return Array.from({ length: 50 }, (_, i) => {
-    const status = statusOpts[Math.floor(Math.random() * statusOpts.length)];
-    return {
-      ID: `TRX-${1000 + i + 1}`,
-      Consultor: `Consultor ${Math.floor(Math.random() * 20) + 1}`,
-      Cliente: `Empresa Parceira ${String.fromCharCode(65 + (i % 26))} LTDA`,
-      Produto: i % 3 === 0 ? 'Plano LD VIP' : 'Banda Larga Fibra',
-      'Valor Prévia': (Math.random() * 500).toFixed(2),
-      'Valor Extrato': status === 'OK' ? '-' : (Math.random() * 400).toFixed(2),
-      Status: status,
-      _motivo: status === 'Divergente' ? 'Valor Inferior' : null,
-    };
-  });
-}
+// CORRIGIDO #9: Geração de IDs via crypto.randomUUID() em vez de Date.now().
+// Date.now() é previsível e pode colidir em operações rápidas.
+// crypto.randomUUID() gera UUIDs únicos de forma segura.
+const generateId = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback para ambientes que não suportam crypto.randomUUID
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+};
 
 // ═══════════════════════════════════════════════════════════════
 // COMPONENTE RAIZ
 // ═══════════════════════════════════════════════════════════════
 
 export default function App() {
-  // Lê o Local Storage para ver se já existe alguém logado
+  // CORRIGIDO #1/#2 (parcial — frontend only):
+  // Antes: o objeto completo do usuário era salvo no localStorage e
+  // a sessão era reconstruída sem nenhuma revalidação, permitindo forjar
+  // uma sessão com role:'master' editando o localStorage manualmente.
+  //
+  // Agora: salvamos apenas name e role (sem dados sensíveis extras).
+  // O role vindo do localStorage é VALIDADO contra USER_ROLES antes de ser aceito.
+  // Se inválido, a sessão é descartada e o usuário precisa logar novamente.
+  //
+  // ⚠️ AÇÃO NECESSÁRIA NO BACKEND (ver relatório):
+  // A solução completa exige que a sessão seja validada via endpoint /api/me
+  // usando um token JWT em cookie httpOnly a cada inicialização do app.
+  // O localStorage nunca deve ser a fonte de verdade para autenticação.
+
   const [loggedUser, setLoggedUser] = useState(() => {
-    const usuarioSalvo = localStorage.getItem('@ExtratoConnect:user');
-    return usuarioSalvo ? JSON.parse(usuarioSalvo) : null;
+    try {
+      const saved = localStorage.getItem('@ExtratoConnect:user');
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      // Valida que o role salvo é um valor legítimo antes de aceitar
+      if (!parsed?.role || !USER_ROLES.includes(parsed.role)) {
+        localStorage.removeItem('@ExtratoConnect:user');
+        return null;
+      }
+      return parsed;
+    } catch {
+      localStorage.removeItem('@ExtratoConnect:user');
+      return null;
+    }
   });
-  
-  // Define se está autenticado com base no que encontrou no Local Storage
+
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('@ExtratoConnect:user') !== null;
+    try {
+      const saved = localStorage.getItem('@ExtratoConnect:user');
+      if (!saved) return false;
+      const parsed = JSON.parse(saved);
+      // Só considera autenticado se o role for válido
+      return !!(parsed?.role && USER_ROLES.includes(parsed.role));
+    } catch {
+      return false;
+    }
   });
 
   const [currentView, setCurrentView]               = useState('dashboard');
@@ -195,12 +252,24 @@ export default function App() {
   const [metasData, setMetasData]                   = useState(INITIAL_METAS);
   const [domains, setDomains]                       = useState(INITIAL_DOMAINS);
   const [uploadHistory, setUploadHistory]           = useState([]);
+  // CORRIGIDO #15: Estado para o toast de feedback após uploads
+  const [uploadToast, setUploadToast]               = useState(null);
+
+  // Exibe toast e remove automaticamente após 4 segundos
+  const showToast = useCallback((message, type = 'success') => {
+    setUploadToast({ message, type });
+    setTimeout(() => setUploadToast(null), 4000);
+  }, []);
 
   const handleLogin = useCallback((user) => {
-    setLoggedUser(user);
+    // CORRIGIDO #3: Valida o role recebido da API antes de aceitar.
+    // Se a API retornar um cargo inválido, usa 'visualizador' como fallback seguro.
+    const safeRole = USER_ROLES.includes(user.role) ? user.role : 'visualizador';
+    const safeUser = { name: user.name, role: safeRole };
+    setLoggedUser(safeUser);
     setIsAuthenticated(true);
     setCurrentView('dashboard');
-    localStorage.setItem('@ExtratoConnect:user', JSON.stringify(user));
+    localStorage.setItem('@ExtratoConnect:user', JSON.stringify(safeUser));
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -289,24 +358,53 @@ export default function App() {
           </span>
         </header>
 
+        {/* CORRIGIDO #15: Toast de feedback de upload */}
+        {uploadToast && (
+          <div className={`fixed top-5 right-5 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium transition-all
+            ${uploadToast.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+            {uploadToast.type === 'success'
+              ? <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+              : <XCircle className="w-5 h-5 text-red-500 flex-shrink-0" />}
+            {uploadToast.message}
+            <button onClick={() => setUploadToast(null)} className="ml-2 text-current opacity-60 hover:opacity-100">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-slate-50 p-4 sm:p-6 lg:p-8">
+          {/* CORRIGIDO #7: Guard de autorização nas views administrativas.
+              Se um usuário não-master tentar acessar upload/domains/users
+              via manipulação de estado (DevTools), é redirecionado ao dashboard
+              com uma mensagem de acesso negado. */}
           {currentView === 'dashboard' && <DashboardView data={parsedData} domains={domains} />}
           {currentView === 'metas'     && <MetasDashboardView data={metasData} setMetasData={setMetasData} domains={domains} />}
           {currentView === 'analysis'  && <AnalysisView data={parsedData} />}
           {currentView === 'upload'    && (
-            <UploadView
-              setParsedData={setParsedData}
-              isProcessing={isProcessing}
-              setIsProcessing={setIsProcessing}
-              setCurrentView={setCurrentView}
-              setActiveCompetencia={setActiveCompetencia}
-              uploadHistory={uploadHistory}
-              setUploadHistory={setUploadHistory}
-              loggedUser={loggedUser}
-            />
+            isMaster
+              ? <UploadView
+                  setParsedData={setParsedData}
+                  isProcessing={isProcessing}
+                  setIsProcessing={setIsProcessing}
+                  setCurrentView={setCurrentView}
+                  setActiveCompetencia={setActiveCompetencia}
+                  uploadHistory={uploadHistory}
+                  setUploadHistory={setUploadHistory}
+                  loggedUser={loggedUser}
+                  showToast={showToast}
+                />
+              : <AccessDeniedView onBack={() => setCurrentView('dashboard')} />
           )}
-          {currentView === 'domains' && <DomainsView domains={domains} setDomains={setDomains} />}
-          {currentView === 'users'   && <UsersView users={users} setUsers={setUsers} />}
+          {currentView === 'domains' && (
+            isMaster
+              ? <DomainsView domains={domains} setDomains={setDomains} />
+              : <AccessDeniedView onBack={() => setCurrentView('dashboard')} />
+          )}
+          {currentView === 'users' && (
+            isMaster
+              ? <UsersView users={users} setUsers={setUsers} />
+              : <AccessDeniedView onBack={() => setCurrentView('dashboard')} />
+          )}
         </main>
       </div>
     </div>
@@ -314,11 +412,34 @@ export default function App() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// LOGIN — botão único, role vem do cadastro de usuários
+// CORRIGIDO #7: Componente de acesso negado
+// Exibido quando um usuário sem permissão tenta acessar uma view restrita.
+// ═══════════════════════════════════════════════════════════════
+
+function AccessDeniedView({ onBack }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-center p-10">
+      <ShieldCheck className="w-16 h-16 text-red-300 mb-4" />
+      <h2 className="text-2xl font-bold text-slate-700 mb-2">Acesso Negado</h2>
+      <p className="text-gray-500 mb-6 max-w-sm">
+        Você não tem permissão para acessar esta área. Apenas usuários com perfil <strong>master</strong> podem acessar as funções de administração.
+      </p>
+      <button onClick={onBack} className="px-5 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium">
+        Voltar ao Dashboard
+      </button>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LOGIN
 // ═══════════════════════════════════════════════════════════════
 
 function LoginScreen({ users, onLogin }) {
-  const [email, setEmail]               = useState('teste@msconnect.com');
+  // CORRIGIDO #4/#5: Removido e-mail pré-preenchido e credenciais demo visíveis na tela.
+  // Antes: useState('teste@msconnect.com') expunha um login real na interface.
+  // Antes: bloco <p> exibia usuário e senha Demo publicamente.
+  const [email, setEmail]               = useState('');
   const [password, setPassword]         = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors]             = useState({});
@@ -326,6 +447,8 @@ function LoginScreen({ users, onLogin }) {
   const [attempts, setAttempts]         = useState(0);
   const [blocked, setBlocked]           = useState(false);
   const [blockTimer, setBlockTimer]     = useState(0);
+  // CORRIGIDO #16: Estado de loading durante o fetch da API
+  const [isLoading, setIsLoading]       = useState(false);
 
   useEffect(() => { if (attempts >= 5) { setBlocked(true); setBlockTimer(30); } }, [attempts]);
 
@@ -352,34 +475,45 @@ function LoginScreen({ users, onLogin }) {
     e.preventDefault();
     if (blocked || !validate()) return;
 
+    // CORRIGIDO #16: Ativa o estado de loading antes do fetch
+    setIsLoading(true);
+    setLoginError('');
+
     try {
-      // Faz a chamada real para a nossa API enviando o que o usuário digitou
+      // CORRIGIDO #17: Adicionado AbortController para timeout de 10s.
+      // Antes, uma falha de rede genérica retornava sempre 'Erro ao conectar'.
+      // Agora distingue timeout de erro de rede.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
       const resposta = await fetch('/api/login', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          email: email,    // Pega a variável de email do seu React
-          senha: password  // Pega a variável de password do seu React
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email, senha: password }),
+        signal: controller.signal,
       });
 
+      clearTimeout(timeoutId);
       const dados = await resposta.json();
 
-      // Se a API responder com sucesso (encontrou no banco)
       if (resposta.ok && dados.sucesso) {
         setLoginError('');
-        // Passamos o nome do usuário que veio do banco para o restante do app
         onLogin({ name: dados.usuario, role: dados.cargo });
       } else {
-        // Se a API não encontrou ou a senha tá errada
         setAttempts(a => a + 1);
         setLoginError(dados.erro || `Credenciais inválidas. Tentativa ${attempts + 1}/5.`);
       }
 
     } catch (error) {
-      setLoginError('Erro ao conectar com o servidor.');
+      // CORRIGIDO #17: Mensagem de erro diferenciada por tipo de falha
+      if (error.name === 'AbortError') {
+        setLoginError('Tempo de resposta esgotado. Verifique sua conexão e tente novamente.');
+      } else {
+        setLoginError('Não foi possível conectar ao servidor. Verifique sua conexão.');
+      }
+    } finally {
+      // CORRIGIDO #16: Desativa loading independente do resultado
+      setIsLoading(false);
     }
   };
 
@@ -395,7 +529,7 @@ function LoginScreen({ users, onLogin }) {
           <div>
             <label className="block text-sm font-medium text-gray-700">E-mail corporativo</label>
             <input
-              type="email" value={email} disabled={blocked}
+              type="email" value={email} disabled={blocked || isLoading}
               onChange={e => { setEmail(e.target.value); setErrors(er => ({ ...er, email: '' })); }}
               className={`mt-1 block w-full rounded-md shadow-sm p-2.5 border ${errors.email ? 'border-red-400' : 'border-gray-300 focus:border-purple-500 focus:ring-purple-500'}`}
               placeholder="seunome@empresa.com" autoComplete="username"
@@ -407,7 +541,7 @@ function LoginScreen({ users, onLogin }) {
             <label className="block text-sm font-medium text-gray-700">Senha</label>
             <div className="relative mt-1">
               <input
-                type={showPassword ? 'text' : 'password'} value={password} disabled={blocked}
+                type={showPassword ? 'text' : 'password'} value={password} disabled={blocked || isLoading}
                 onChange={e => { setPassword(e.target.value); setErrors(er => ({ ...er, password: '' })); }}
                 className={`block w-full rounded-md shadow-sm p-2.5 border pr-10 ${errors.password ? 'border-red-400' : 'border-gray-300 focus:border-purple-500 focus:ring-purple-500'}`}
                 placeholder="••••••••" autoComplete="current-password"
@@ -432,61 +566,116 @@ function LoginScreen({ users, onLogin }) {
             </div>
           )}
 
-          {/* ── BOTÃO ÚNICO "ENTRAR" ── */}
+          {/* CORRIGIDO #16: Botão exibe spinner e texto "Entrando..." durante o fetch */}
           <button
-            type="submit" disabled={blocked}
-            className="w-full flex justify-center py-2.5 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            type="submit" disabled={blocked || isLoading}
+            className="w-full flex justify-center items-center gap-2 py-2.5 px-4 rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            Entrar
+            {isLoading ? (
+              <>
+                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                </svg>
+                Entrando...
+              </>
+            ) : 'Entrar'}
           </button>
         </form>
 
         <p className="mt-6 text-center text-xs text-gray-400">Ambiente seguro. Monitoramento de acesso ativo.</p>
-        <p className="mt-1 text-center text-xs text-gray-400">
-          Demo: <code className="bg-gray-100 px-1 rounded">teste@msconnect.com</code> / <code className="bg-gray-100 px-1 rounded">Demo@1234</code>
-        </p>
+        {/* CORRIGIDO #4: Removido bloco que exibia credenciais demo publicamente */}
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DASHBOARD PRINCIPAL — filtros alimentados pelos domínios
+// DASHBOARD PRINCIPAL
+// CORRIGIDO #11: Filtros agora têm estado e filtram os dados reais.
+// Antes: FilterSelect não tinha value nem onChange — era puramente decorativo.
 // ═══════════════════════════════════════════════════════════════
 
 function DashboardView({ data, domains }) {
-  const hasData       = data?.length > 0;
-  const totalValue    = hasData ? data.reduce((a, c) => a + (parseFloat(c['VALOR APURADO']) || 0), 0) : 1245000.50;
-  const totalRows     = hasData ? data.length : 254302;
-  const inconsist     = hasData ? data.filter(d => d._status === 'divergente').length : 1420;
+  const hasData = data?.length > 0;
 
-  // Filtros construídos a partir dos domínios cadastrados — com "Todos" como primeiro item
+  // CORRIGIDO #11: Estado dos filtros — cada um controla sua seleção
+  const [filterGrupo, setFilterGrupo]         = useState('Todos');
+  const [filterEsteira, setFilterEsteira]     = useState('Todos');
+  const [filterTipo, setFilterTipo]           = useState('Todos');
+  const [filterSupervisor, setFilterSupervisor] = useState('Todos');
+  const [filterTime, setFilterTime]           = useState('Todos');
+  const [filterRegional, setFilterRegional]   = useState('Todos');
+
+  // CORRIGIDO #11: Dados filtrados aplicando todos os filtros ativos
+  const filteredData = useMemo(() => {
+    if (!hasData) return [];
+    return data.filter(d =>
+      (filterGrupo     === 'Todos' || d['GRUPO COMISSÃO'] === filterGrupo) &&
+      (filterEsteira   === 'Todos' || d['ESTEIRA']        === filterEsteira) &&
+      (filterTipo      === 'Todos' || d['TIPO COMISSÃO']  === filterTipo) &&
+      (filterSupervisor=== 'Todos' || d['SUPERVISOR']     === filterSupervisor) &&
+      (filterTime      === 'Todos' || d['TIME']           === filterTime) &&
+      (filterRegional  === 'Todos' || d['REGIONAL']       === filterRegional)
+    );
+  }, [data, hasData, filterGrupo, filterEsteira, filterTipo, filterSupervisor, filterTime, filterRegional]);
+
+  const displayData   = hasData ? filteredData : [];
+  const totalValue    = hasData ? displayData.reduce((a, c) => a + (parseFloat(c['VALOR APURADO']) || 0), 0) : 1245000.50;
+  const totalRows     = hasData ? displayData.length : 254302;
+  const inconsist     = hasData ? displayData.filter(d => d._status === 'divergente').length : 1420;
+
   const mkOpts = (arr) => ['Todos', ...arr];
+
+  const resetFilters = () => {
+    setFilterGrupo('Todos'); setFilterEsteira('Todos'); setFilterTipo('Todos');
+    setFilterSupervisor('Todos'); setFilterTime('Todos'); setFilterRegional('Todos');
+  };
+
+  const hasActiveFilters = [filterGrupo, filterEsteira, filterTipo, filterSupervisor, filterTime, filterRegional]
+    .some(f => f !== 'Todos');
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-10">
 
-      {/* FILTROS */}
+      {/* FILTROS — agora funcionais */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-4">
         <div className="flex justify-between items-center pb-2 border-b border-gray-100">
-          <h3 className="text-sm font-semibold text-gray-600 flex items-center">
-            <Filter className="w-4 h-4 mr-2" /> Filtros do Dashboard
-          </h3>
-          <button className="text-sm flex items-center text-slate-600 bg-white border border-slate-300 px-3 py-1.5 rounded-lg hover:bg-slate-50">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-semibold text-gray-600 flex items-center">
+              <Filter className="w-4 h-4 mr-2" /> Filtros do Dashboard
+            </h3>
+            {hasActiveFilters && (
+              <button onClick={resetFilters} className="text-xs text-purple-600 hover:text-purple-800 underline">
+                Limpar filtros
+              </button>
+            )}
+          </div>
+          {/* CORRIGIDO #12: Botão PDF desabilitado com tooltip — não tinha ação implementada */}
+          <button
+            disabled
+            title="Exportação para PDF será disponibilizada em breve"
+            className="text-sm flex items-center text-gray-400 bg-white border border-gray-200 px-3 py-1.5 rounded-lg cursor-not-allowed opacity-60">
             <Download className="w-4 h-4 mr-2" /> PDF
           </button>
         </div>
+        {/* CORRIGIDO #11: Cada FilterSelect agora recebe value e onChange */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <FilterSelect label="Grupo Comissão" options={mkOpts(domains.grupoComissao)} />
-          <FilterSelect label="Esteira"        options={mkOpts(domains.esteira)} />
-          <FilterSelect label="Tipo Comissão"  options={mkOpts(domains.tipoComissao)} />
-          <FilterSelect label="Supervisor"     options={mkOpts(domains.supervisor)} />
-          <FilterSelect label="Time"           options={mkOpts(domains.time)} />
-          <FilterSelect label="Regional"       options={mkOpts(domains.regional)} />
+          <FilterSelect label="Grupo Comissão" options={mkOpts(domains.grupoComissao)} value={filterGrupo}      onChange={setFilterGrupo} />
+          <FilterSelect label="Esteira"        options={mkOpts(domains.esteira)}       value={filterEsteira}    onChange={setFilterEsteira} />
+          <FilterSelect label="Tipo Comissão"  options={mkOpts(domains.tipoComissao)}  value={filterTipo}       onChange={setFilterTipo} />
+          <FilterSelect label="Supervisor"     options={mkOpts(domains.supervisor)}    value={filterSupervisor} onChange={setFilterSupervisor} />
+          <FilterSelect label="Time"           options={mkOpts(domains.time)}          value={filterTime}       onChange={setFilterTime} />
+          <FilterSelect label="Regional"       options={mkOpts(domains.regional)}      value={filterRegional}   onChange={setFilterRegional} />
         </div>
         {!hasData && (
           <p className="text-xs text-purple-600 bg-purple-50 border border-purple-100 rounded-md px-3 py-2">
             ℹ️ Os filtros exibem os itens cadastrados em <strong>Domínios de Filtros</strong>. Importe um arquivo para cruzar com dados reais.
+          </p>
+        )}
+        {hasData && hasActiveFilters && (
+          <p className="text-xs text-purple-600 bg-purple-50 border border-purple-100 rounded-md px-3 py-2">
+            ℹ️ Exibindo {displayData.length} de {data.length} registros conforme filtros aplicados.
           </p>
         )}
       </div>
@@ -549,13 +738,16 @@ function DashboardView({ data, domains }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DASHBOARD DE METAS — filtros via domínios
+// DASHBOARD DE METAS
+// CORRIGIDO #8: Confirmação de exclusão adicionada na tabela de metas.
 // ═══════════════════════════════════════════════════════════════
 
 function MetasDashboardView({ data, setMetasData, domains }) {
   const [isAdding, setIsAdding] = useState(false);
   const [filterTime, setFilterTime]         = useState('Todos');
   const [filterRegional, setFilterRegional] = useState('Todas');
+  // CORRIGIDO #8: Estado para controlar qual meta está aguardando confirmação de exclusão
+  const [deleteMetaConfirm, setDeleteMetaConfirm] = useState(null);
   const [newMeta, setNewMeta] = useState({
     consultor: '', supervisor: '', time: '', regional: '', coordenador: '', meta: '', indicador: 'Receita Bruta', valor: '',
   });
@@ -571,7 +763,8 @@ function MetasDashboardView({ data, setMetasData, domains }) {
 
   const handleAddSubmit = () => {
     if (!newMeta.consultor || !newMeta.meta) return;
-    setMetasData(prev => [...prev, { ...newMeta, id: Date.now(), meta: Number(newMeta.meta), valor: Number(newMeta.valor) || 0 }]);
+    // CORRIGIDO #9: Usa generateId() em vez de Date.now()
+    setMetasData(prev => [...prev, { ...newMeta, id: generateId(), meta: Number(newMeta.meta), valor: Number(newMeta.valor) || 0 }]);
     setIsAdding(false);
     setNewMeta({ consultor: '', supervisor: '', time: '', regional: '', coordenador: '', meta: '', indicador: 'Receita Bruta', valor: '' });
   };
@@ -698,10 +891,19 @@ function MetasDashboardView({ data, setMetasData, domains }) {
                     <td className="px-4 py-3 text-center">
                       <span className={`inline-flex px-2 py-0.5 rounded text-xs font-bold ${met ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{pct}%</span>
                     </td>
+                    {/* CORRIGIDO #8: Exclusão de meta com confirmação inline, igual ao padrão de usuários */}
                     <td className="px-4 py-3 text-center">
-                      <button onClick={() => setMetasData(d => d.filter(m => m.id !== row.id))} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {deleteMetaConfirm === row.id ? (
+                        <span className="flex items-center justify-center gap-1 text-xs text-red-600">
+                          Confirmar?
+                          <button onClick={() => { setMetasData(d => d.filter(m => m.id !== row.id)); setDeleteMetaConfirm(null); }} className="font-bold underline">Sim</button>
+                          <button onClick={() => setDeleteMetaConfirm(null)} className="font-bold underline">Não</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setDeleteMetaConfirm(row.id)} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -719,10 +921,11 @@ function MetasDashboardView({ data, setMetasData, domains }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// UPLOAD DE BASES — 3 tipos + modelo para download + histórico
+// UPLOAD DE BASES
+// CORRIGIDO #15: Adicionado showToast para feedback de sucesso pós-upload.
 // ═══════════════════════════════════════════════════════════════
 
-function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentView, setActiveCompetencia, uploadHistory, setUploadHistory, loggedUser }) {
+function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentView, setActiveCompetencia, uploadHistory, setUploadHistory, loggedUser, showToast }) {
   const [file, setFile]                         = useState(null);
   const [progress, setProgress]                 = useState(0);
   const [selectedMonth, setSelectedMonth]       = useState(CURRENT_MONTH);
@@ -767,9 +970,9 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
         if (fileType === 'extrato') setParsedData(data);
         setActiveCompetencia({ month: selectedMonth, year: parseInt(selectedYear, 10) });
 
-        // Registra no histórico
+        // CORRIGIDO #9: Usa generateId() em vez de Date.now()
         setUploadHistory(prev => [{
-          id: Date.now(),
+          id: generateId(),
           type: fileType,
           filename: file.name,
           size: (file.size / 1024 / 1024).toFixed(2),
@@ -780,7 +983,14 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
         }, ...prev]);
 
         setIsProcessing(false);
-        if (fileType === 'extrato') setCurrentView('analysis');
+
+        // CORRIGIDO #15: Feedback de sucesso para todos os tipos de upload
+        const typeLabel = UPLOAD_TYPES.find(t => t.value === fileType)?.label ?? fileType;
+        if (fileType === 'extrato') {
+          setCurrentView('analysis');
+        } else {
+          showToast(`${typeLabel} importado com sucesso!`);
+        }
         setFile(null);
       }, 500);
     };
@@ -789,7 +999,6 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
 
   const cy = new Date().getFullYear();
 
-  // Agrupa histórico por tipo para exibir na seção de últimas atualizações
   const historyByType = useMemo(() => {
     const map = {};
     UPLOAD_TYPES.forEach(t => { map[t.value] = uploadHistory.filter(h => h.type === t.value); });
@@ -808,7 +1017,7 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
 
         <div className="p-6 space-y-6">
 
-          {/* TIPO DE ARQUIVO — 3 opções com botão de modelo */}
+          {/* TIPO DE ARQUIVO */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">Tipo de Arquivo</label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -826,12 +1035,15 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
                     onClick={() => setFileType(opt.value)}>
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <input type="radio" name="fileType" value={opt.value} checked={active} onChange={() => setFileType(opt.value)}
-                          className="h-4 w-4 accent-purple-600" readOnly />
+                        {/* CORRIGIDO #25: Removido atributo 'readOnly' indevido do radio button.
+                            O controle correto é via onChange. readOnly em radio suprime warnings
+                            ao custo de semântica incorreta. */}
+                        <input type="radio" name="fileType" value={opt.value} checked={active}
+                          onChange={() => setFileType(opt.value)}
+                          className="h-4 w-4 accent-purple-600" />
                         <span className="font-medium text-sm">{opt.label}</span>
                       </div>
                     </div>
-                    {/* Botão baixar modelo */}
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); downloadTemplate(opt.value); }}
@@ -976,6 +1188,7 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
 
 // ═══════════════════════════════════════════════════════════════
 // ANÁLISE
+// CORRIGIDO #12/#13: Botões sem ação desabilitados com título explicativo.
 // ═══════════════════════════════════════════════════════════════
 
 function AnalysisView({ data }) {
@@ -984,8 +1197,9 @@ function AnalysisView({ data }) {
   const rowsPerPage = 15;
   const isMock = !data?.length;
 
+  // CORRIGIDO #20: Usa MOCK_TABLE_DATA fixo em vez de gerar com Math.random() dentro do useMemo
   const displayData = useMemo(() => {
-    let src = isMock ? generateMockTableData() : data;
+    let src = isMock ? MOCK_TABLE_DATA : data;
     if (searchTerm) {
       const t = searchTerm.toLowerCase();
       src = src.filter(row => Object.values(row).some(v => String(v).toLowerCase().includes(t)));
@@ -1009,11 +1223,19 @@ function AnalysisView({ data }) {
               onChange={e => { setSearchTerm(e.target.value); setCurrentPage(1); }}
               className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 w-full sm:w-64 text-sm" />
           </div>
-          <button className="flex items-center text-sm font-medium text-gray-600 border border-gray-300 rounded-lg px-4 py-2 hover:bg-gray-50">
+          {/* CORRIGIDO #12: Botão "Filtros Avançados" desabilitado — não tinha ação */}
+          <button
+            disabled
+            title="Filtros avançados serão disponibilizados em breve"
+            className="flex items-center text-sm font-medium text-gray-400 border border-gray-200 rounded-lg px-4 py-2 cursor-not-allowed opacity-60">
             <Filter className="w-4 h-4 mr-2" /> Filtros Avançados
           </button>
         </div>
-        <button className="flex items-center text-sm font-medium text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2 hover:bg-emerald-100">
+        {/* CORRIGIDO #12: Botão "Exportar Inconsistências" desabilitado — não tinha ação */}
+        <button
+          disabled
+          title="Exportação será disponibilizada em breve"
+          className="flex items-center text-sm font-medium text-gray-400 bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 cursor-not-allowed opacity-60">
           <Download className="w-4 h-4 mr-2" /> Exportar Inconsistências
         </button>
       </div>
@@ -1054,7 +1276,13 @@ function AnalysisView({ data }) {
                       </td>
                     ))}
                     <td className="px-6 py-4 text-right text-sm">
-                      <button className="text-slate-500 hover:text-slate-800 px-2 py-1">Detalhes</button>
+                      {/* CORRIGIDO #13: Botão "Detalhes" desabilitado — não tinha ação */}
+                      <button
+                        disabled
+                        title="Detalhes do registro serão disponibilizados em breve"
+                        className="text-gray-400 px-2 py-1 cursor-not-allowed opacity-60">
+                        Detalhes
+                      </button>
                     </td>
                   </tr>
                 );
@@ -1084,7 +1312,7 @@ function AnalysisView({ data }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// DOMÍNIOS DE FILTROS — cadastro de itens para os 6 filtros
+// DOMÍNIOS DE FILTROS
 // ═══════════════════════════════════════════════════════════════
 
 const DOMAIN_LABELS = {
@@ -1097,12 +1325,12 @@ const DOMAIN_LABELS = {
 };
 
 function DomainsView({ domains, setDomains }) {
-  const [newItem, setNewItem] = useState({});  // { [domainKey]: inputValue }
+  const [newItem, setNewItem] = useState({});
 
   const addItem = (key) => {
     const val = newItem[key]?.trim();
     if (!val) return;
-    if (domains[key].includes(val)) return; // sem duplicata
+    if (domains[key].includes(val)) return;
     setDomains(d => ({ ...d, [key]: [...d[key], val] }));
     setNewItem(n => ({ ...n, [key]: '' }));
   };
@@ -1130,7 +1358,6 @@ function DomainsView({ domains, setDomains }) {
             </div>
 
             <div className="p-4 space-y-3">
-              {/* Input para novo item */}
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -1146,7 +1373,6 @@ function DomainsView({ domains, setDomains }) {
                 </button>
               </div>
 
-              {/* Lista de itens */}
               <div className="flex flex-wrap gap-2 min-h-[40px]">
                 {domains[key].length === 0 && (
                   <p className="text-xs text-gray-400 italic w-full text-center py-2">Nenhum item cadastrado.</p>
@@ -1217,7 +1443,8 @@ function UsersView({ users, setUsers }) {
     if (editingId) {
       setUsers(prev => prev.map(u => u.id === editingId ? { ...u, username: formData.username, name: formData.name, role: formData.role, active: formData.active } : u));
     } else {
-      setUsers(prev => [...prev, { id: Date.now(), username: formData.username, name: formData.name, role: formData.role, active: formData.active, createdAt: new Date().toISOString().split('T')[0] }]);
+      // CORRIGIDO #9: Usa generateId() em vez de Date.now()
+      setUsers(prev => [...prev, { id: generateId(), username: formData.username, name: formData.name, role: formData.role, active: formData.active, createdAt: new Date().toISOString().split('T')[0] }]);
     }
     resetForm();
   };
@@ -1406,11 +1633,15 @@ function BarChartRow({ label, percentage, value, color }) {
   );
 }
 
-function FilterSelect({ label, options }) {
+// CORRIGIDO #11: FilterSelect agora aceita value e onChange para ser controlado
+function FilterSelect({ label, options, value, onChange }) {
   return (
     <div className="flex items-center text-sm min-w-[130px] bg-gray-50 rounded-md border border-gray-200 px-2">
       <span className="text-gray-500 mr-1 whitespace-nowrap text-xs">{label}:</span>
-      <select className="border-none bg-transparent text-slate-700 font-medium py-1.5 focus:ring-0 cursor-pointer w-full text-xs">
+      <select
+        value={value ?? options[0]}
+        onChange={e => onChange && onChange(e.target.value)}
+        className="border-none bg-transparent text-slate-700 font-medium py-1.5 focus:ring-0 cursor-pointer w-full text-xs">
         {options.map(opt => <option key={opt}>{opt}</option>)}
       </select>
     </div>
@@ -1425,4 +1656,3 @@ function MiniCard({ title, value, color = 'text-slate-800' }) {
     </div>
   );
 }
-
