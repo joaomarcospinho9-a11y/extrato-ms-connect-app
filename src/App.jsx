@@ -7,6 +7,7 @@ import {
   BarChart3, Tag, Clock, History, FileDown, Plus
 } from 'lucide-react';
 // CORRIGIDO #19: Removidos imports 'Settings' e 'Minus' que não eram utilizados em nenhum lugar do código.
+import * as XLSX from 'xlsx';
 
 // ═══════════════════════════════════════════════════════════════
 // CONSTANTES GLOBAIS
@@ -174,18 +175,24 @@ const parseCSV = (text) => {
   return data;
 };
 
-// Gera e dispara download de CSV modelo
+// Gera e dispara download de XLSX modelo
 const downloadTemplate = (type) => {
+  // 1. Pegar as colunas definidas no TEMPLATE_COLUMNS
   const cols = TEMPLATE_COLUMNS[type];
   if (!cols) return;
-  const csvContent = cols.join(',') + '\n';
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `modelo_${type}_${new Date().toISOString().split('T')[0]}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+
+  // 2. Criar uma folha (worksheet) com a linha de cabeçalhos
+  const worksheet = XLSX.utils.aoa_to_sheet([cols]);
+
+  // 3. Criar o livro de Excel (workbook) e anexar a folha
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Modelo");
+
+  // 4. Gerar o nome do ficheiro e forçar o download
+  const dataHoje = new Date().toISOString().split('T')[0];
+  const fileName = `modelo_${type}_${dataHoje}.xlsx`;
+  
+  XLSX.writeFile(workbook, fileName);
 };
 
 // CORRIGIDO #9: Geração de IDs via crypto.randomUUID() em vez de Date.now().
