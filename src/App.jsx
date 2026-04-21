@@ -175,8 +175,17 @@ function generateMockTableData() {
 // ═══════════════════════════════════════════════════════════════
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated]       = useState(false);
-  const [loggedUser, setLoggedUser]                 = useState(null);       // objeto completo do usuário logado
+  // Lê o Local Storage para ver se já existe alguém logado
+  const [loggedUser, setLoggedUser] = useState(() => {
+    const usuarioSalvo = localStorage.getItem('@ExtratoConnect:user');
+    return usuarioSalvo ? JSON.parse(usuarioSalvo) : null;
+  });
+  
+  // Define se está autenticado com base no que encontrou no Local Storage
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return localStorage.getItem('@ExtratoConnect:user') !== null;
+  });
+
   const [currentView, setCurrentView]               = useState('dashboard');
   const [sidebarOpen, setSidebarOpen]               = useState(true);
   const [parsedData, setParsedData]                 = useState([]);
@@ -184,14 +193,14 @@ export default function App() {
   const [activeCompetencia, setActiveCompetencia]   = useState({ month: CURRENT_MONTH, year: CURRENT_YEAR });
   const [users, setUsers]                           = useState(INITIAL_USERS);
   const [metasData, setMetasData]                   = useState(INITIAL_METAS);
-  const [domains, setDomains]                       = useState(INITIAL_DOMAINS);  // ← cadastro de domínios de filtro
-  const [uploadHistory, setUploadHistory]           = useState([]);                // ← histórico de uploads
+  const [domains, setDomains]                       = useState(INITIAL_DOMAINS);
+  const [uploadHistory, setUploadHistory]           = useState([]);
 
-  // Login: recebe o objeto do usuário encontrado na lista
   const handleLogin = useCallback((user) => {
     setLoggedUser(user);
     setIsAuthenticated(true);
     setCurrentView('dashboard');
+    localStorage.setItem('@ExtratoConnect:user', JSON.stringify(user));
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -199,6 +208,7 @@ export default function App() {
     setLoggedUser(null);
     setParsedData([]);
     setCurrentView('dashboard');
+    localStorage.removeItem('@ExtratoConnect:user');
   }, []);
 
   if (!isAuthenticated) {
