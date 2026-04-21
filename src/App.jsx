@@ -33,9 +33,9 @@ const USER_ROLES   = ['master', 'gerente', 'analista', 'visualizador'];
 
 // Tipos de upload — centralizado para reaproveitar em modelo e histórico
 const UPLOAD_TYPES = [
-  { value: 'extrato',   label: 'Extrato Original',     color: 'purple' },
-  { value: 'recalculo', label: 'Arquivo de Recálculo',  color: 'blue'   },
-  { value: 'metas',     label: 'Upload de Metas',       color: 'emerald'},
+  { value: 'extrato',   label: 'Upload Extrato',     color: 'purple' },
+  { value: 'recalculo', label: 'Upload Recálculo',  color: 'blue'   },
+  { value: 'metas',     label: 'Upload Metas',       color: 'emerald'},
 ];
 
 // Colunas modelo para download — define o template CSV de cada tipo
