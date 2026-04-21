@@ -23,11 +23,12 @@ export default async function handler(req, res) {
 
     // 5. Se encontrou alguém, o login deu certo!
     if (usuarios.length > 0) {
-      return res.status(200).json({ 
-        sucesso: true, 
-        mensagem: 'Login realizado com sucesso! 🎉', 
-        usuario: usuarios[0].nome 
-      });
+      return res.status(200).json({
+      sucesso: true,
+      mensagem: 'Login realizado com sucesso! 🎉',
+      usuario: usuarios[0].nome,
+      cargo: usuarios[0].cargo // <-- Linha nova adicionada aqui!
+    });
     } else {
       // Se não encontrou, os dados estão errados
       return res.status(401).json({ erro: 'E-mail ou senha incorretos.' });

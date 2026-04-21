@@ -361,7 +361,7 @@ function LoginScreen({ users, onLogin }) {
       if (resposta.ok && dados.sucesso) {
         setLoginError('');
         // Passamos o nome do usuário que veio do banco para o restante do app
-        onLogin({ name: dados.usuario, role: 'user' }); 
+        onLogin({ name: dados.usuario, role: dados.cargo });
       } else {
         // Se a API não encontrou ou a senha tá errada
         setAttempts(a => a + 1);
