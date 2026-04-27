@@ -973,13 +973,33 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
     }, 300);
   };
 
-  const processFile = () => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setTimeout(() => {
-        const data = parseCSV(e.target.result);
-        if (fileType === 'extrato') setParsedData(data);
-        setActiveCompetencia({ month: selectedMonth, year: parseInt(selectedYear, 10) });
+ const reader = new FileReader();
+reader.onload = (e) => {
+  // 1. Lê o resultado como um array de bytes
+  const data = new Uint8Array(e.target.result);
+  
+  // 2. O XLSX processa os bytes do arquivo Excel
+  const workbook = XLSX.read(data, { type: 'array' });
+  
+  // 3. Pega o nome da primeira aba da planilha
+  const primeiraAba = workbook.SheetNames[0];
+  const worksheet = workbook.Sheets[primeiraAba];
+  
+  // 4. Converte a aba do Excel direto para um array de objetos JSON
+  const dadosJson = XLSX.utils.sheet_to_json(worksheet);
+
+  // 5. Aqui você chama a função que envia para a sua API (Upload.txt)
+  // Certifique-se de usar a mesma variável/função que seu código já usa.
+  // Exemplo:
+  // processarDados(dadosJson);
+  // ou
+  // axios.post('/api/upload', { tipo_arquivo: '...', dados: dadosJson });
+};
+// MUDANÇA PRINCIPAL: Agora lê como ArrayBuffer, formato correto para arquivos Excel
+reader.readAsArrayBuffer(file); 
+
+
+
 
         // CORRIGIDO #9: Usa generateId() em vez de Date.now()
         setUploadHistory(prev => [{
