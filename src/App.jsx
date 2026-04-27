@@ -975,105 +975,28 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
 
  const reader = new FileReader();
 reader.onload = (e) => {
+  // 1. Lê o resultado como um array de bytes
   const data = new Uint8Array(e.target.result);
+  
+  // 2. O XLSX processa os bytes do arquivo Excel
   const workbook = XLSX.read(data, { type: 'array' });
+  
+  // 3. Pega o nome da primeira aba da planilha
   const primeiraAba = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[primeiraAba];
   
-  // 1. Lê o arquivo bruto em JSON
-  const dadosJsonBrutos = XLSX.utils.sheet_to_json(worksheet);
+  // 4. Converte a aba do Excel direto para um array de objetos JSON
+  const dadosJson = XLSX.utils.sheet_to_json(worksheet);
 
-  // 2. Faz o mapeamento automático das colunas (Traduz do Excel para o Banco)
-  const dadosMapeados = dadosJsonBrutos.map(linha => ({
-    codigo_parceiro: linha['CÓDIGO PARCEIRO'],
-    login_vendedor: linha['LOGIN VENDEDOR'],
-    cnpj: linha['CNPJ'],
-    nome_rede: linha['NOME REDE'],
-    segmentacao: linha['SEGMENTAÇÃO'],
-    canal: linha['CANAL'],
-    cnpj_cpf_cliente: linha['CNPJ / CPF CLIENTE'],
-    nome_cliente: linha['NOME CLIENTE'],
-    segmento: linha['SEGMENTO'],
-    uf_linha_cliente: linha['UF LINHA / CLIENTE'],
-    operacao: linha['OPERAÇÃO'],
-    movimento_principal: linha['MOVIMENTO PRINCIPAL'],
-    regra_calculo: linha['REGRA DE CÁLCULO'],
-    detalhe_calculo: linha['DETALHE CÁLCULO'],
-    quantidade: linha['QUANTIDADE'],
-    id_comissionamento: linha['ID COMISSIONAMENTO'],
-    ordem_pedido: linha['ORDEM / PEDIDO'],
-    numero_linha: linha['NÚMERO LINHA'],
-    iccid_serial: linha['ICCID / SERIAL'],
-    competencia: linha['COMPETÊNCIA'],
-    data_evento: linha['DATA EVENTO'],
-    data_baixa: linha['DATA BAIXA'],
-    data_ultimo_movimento: linha['DATA ÚLTIMO MOVIMENTO'],
-    dias_suspensao: linha['DIAS SUSPENSÃO'],
-    contagem_baixa: linha['CONTAGEM BAIXA'],
-    subscricao_movel: linha['SUBSCRIÇÃO MÓVEL'],
-    rpon_sva: linha['RPON SVA'],
-    rpon_voz: linha['RPON VOZ'],
-    rpon_bl: linha['RPON BL'],
-    rpon_tv: linha['RPON TV'],
-    codigo_produto_atual: linha['CÓDIGO PRODUTO ATUAL'],
-    produto_atual: linha['PRODUTO ATUAL'],
-    valor_produto_atual: linha['VALOR PRODUTO ATUAL'],
-    valor_desconto: linha['VALOR DESCONTO'],
-    codigo_produto_anterior: linha['CÓDIGO PRODUTO ANTERIOR'],
-    produto_anterior: linha['PRODUTO ANTERIOR'],
-    valor_produto_anterior: linha['VALOR PRODUTO ANTERIOR'],
-    produtos_fixa: linha['PRODUTOS FIXA'],
-    valor_liquido_delta: linha['VALOR LÍQUIDO / DELTA'],
-    fator: linha['FATOR'],
-    indicadores: linha['INDICADORES'],
-    valor_apurado: linha['VALOR APURADO'],
-    rel: linha['REL'],
-    documento_sap: linha['DOCUMENTO SAP'],
-    fornecedor_sap: linha['FORNECEDOR SAP'],
-    item_recalculo: linha['ITEM RECÁLCULO'],
-    motivo_item_recalculo: linha['MOTIVO ITEM RECÁLCULO'],
-    observacao: linha['OBSERVAÇÃO'],
-    chave: linha['CHAVE'],
-    grupo_comissao: linha['GRUPO COMISSÃO'],
-    esteira: linha['ESTEIRA'],
-    tipo_comissao: linha['TIPO COMISSÃO'],
-    consultor: linha['CONSULTOR'],
-    supervisor: linha['SUPERVISOR'],
-    equipe: linha['TIME'], // ← Tradução da coluna "TIME" para "equipe"
-    regional: linha['REGIONAL'],
-    ref_data: linha['REF']
-  }));
-
-  // 3. Função REAL de envio para o Banco de Dados
-  console.log("Leitura do Excel concluída! Iniciando envio...");
-
-  // Envia os dados para a sua API (Upload.js)
-  fetch('/api/upload', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      tipo_arquivo: 'EXTRATO', // Mude para 'RECALCULO' dependendo do botão que o usuário clicou
-      mes_referencia: '01',    // O ideal é pegar essa variável do selecionador de mês da tela
-      ano_referencia: '2026',  // O ideal é pegar essa variável do selecionador de ano da tela
-      dados: dadosMapeados
-    })
-  })
-  .then(resposta => resposta.json())
-  .then(resultado => {
-    if(resultado.erro) {
-      alert("Erro ao salvar no banco: " + resultado.erro);
-    } else {
-      alert("Planilha importada e salva no banco com sucesso!");
-    }
-  })
-  .catch(erro => {
-    console.error("Erro na comunicação com a API:", erro);
-    alert("Erro de conexão. Verifique se o servidor está rodando.");
-  });
-
+  // 5. Aqui você chama a função que envia para a sua API (Upload.txt)
+  // Certifique-se de usar a mesma variável/função que seu código já usa.
+  // Exemplo:
+  // processarDados(dadosJson);
+  // ou
+  // axios.post('/api/upload', { tipo_arquivo: '...', dados: dadosJson });
 };
-reader.readAsArrayBuffer(file);
-
+// MUDANÇA PRINCIPAL: Agora lê como ArrayBuffer, formato correto para arquivos Excel
+reader.readAsArrayBuffer(file); 
 
 
 
