@@ -1072,37 +1072,7 @@ reader.onload = (e) => {
   });
 
 };
-reader.readAsArrayBuffer(file); 
-
-
-
-
-        // CORRIGIDO #9: Usa generateId() em vez de Date.now()
-        setUploadHistory(prev => [{
-          id: generateId(),
-          type: fileType,
-          filename: file.name,
-          size: (file.size / 1024 / 1024).toFixed(2),
-          month: selectedMonth,
-          year: selectedYear,
-          datetime: new Date().toLocaleString('pt-BR'),
-          user: loggedUser?.name ?? 'Desconhecido',
-        }, ...prev]);
-
-        setIsProcessing(false);
-
-        // CORRIGIDO #15: Feedback de sucesso para todos os tipos de upload
-        const typeLabel = UPLOAD_TYPES.find(t => t.value === fileType)?.label ?? fileType;
-        if (fileType === 'extrato') {
-          setCurrentView('analysis');
-        } else {
-          showToast(`${typeLabel} importado com sucesso!`);
-        }
-        setFile(null);
-      }, 500);
-    };
-    reader.readAsText(file);
-  };
+reader.readAsArrayBuffer(file);
 
   const cy = new Date().getFullYear();
 
