@@ -618,21 +618,24 @@ function DashboardView({ data, domains }) {
   const [filterTime, setFilterTime]           = useState('Todos');
   const [filterRegional, setFilterRegional]   = useState('Todos');
 
-  // CORRIGIDO #11: Dados filtrados aplicando todos os filtros ativos
+  // CORREÇÃO 7: Filtros agora usam os campos mapeados do banco (snake_case)
+  // em vez dos cabeçalhos brutos do Excel (ex: 'GRUPO COMISSÃO').
+  // Após o upload, os dados em parsedData têm chaves como grupo_comissao, equipe, etc.
   const filteredData = useMemo(() => {
     if (!hasData) return [];
     return data.filter(d =>
-      (filterGrupo     === 'Todos' || d['GRUPO COMISSÃO'] === filterGrupo) &&
-      (filterEsteira   === 'Todos' || d['ESTEIRA']        === filterEsteira) &&
-      (filterTipo      === 'Todos' || d['TIPO COMISSÃO']  === filterTipo) &&
-      (filterSupervisor=== 'Todos' || d['SUPERVISOR']     === filterSupervisor) &&
-      (filterTime      === 'Todos' || d['TIME']           === filterTime) &&
-      (filterRegional  === 'Todos' || d['REGIONAL']       === filterRegional)
+      (filterGrupo      === 'Todos' || d.grupo_comissao === filterGrupo) &&
+      (filterEsteira    === 'Todos' || d.esteira        === filterEsteira) &&
+      (filterTipo       === 'Todos' || d.tipo_comissao  === filterTipo) &&
+      (filterSupervisor === 'Todos' || d.supervisor     === filterSupervisor) &&
+      (filterTime       === 'Todos' || d.equipe         === filterTime) &&
+      (filterRegional   === 'Todos' || d.regional       === filterRegional)
     );
   }, [data, hasData, filterGrupo, filterEsteira, filterTipo, filterSupervisor, filterTime, filterRegional]);
 
   const displayData   = hasData ? filteredData : [];
-  const totalValue    = hasData ? displayData.reduce((a, c) => a + (parseFloat(c['VALOR APURADO']) || 0), 0) : 1245000.50;
+  // CORREÇÃO 7 (continuação): valor_apurado e _status usam os campos do banco
+  const totalValue    = hasData ? displayData.reduce((a, c) => a + (parseFloat(c.valor_apurado) || 0), 0) : 1245000.50;
   const totalRows     = hasData ? displayData.length : 254302;
   const inconsist     = hasData ? displayData.filter(d => d._status === 'divergente').length : 1420;
 
@@ -957,122 +960,183 @@ function UploadView({ setParsedData, isProcessing, setIsProcessing, setCurrentVi
     setFile(f);
   };
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     const errs = validateCompetencia(selectedMonth, selectedYear);
     setCompetenciaErrors(errs);
     if (errs.length) return;
     if (!file) { setFileError('Selecione um arquivo.'); return; }
 
+    // CORREÇÃO 5: Verificação de duplicidade de mês/ano antes de importar.
+    // Consulta a API para saber se já existe um upload do mesmo tipo/mês/ano.
+    // Extrato e Recalculo compartilham a mesma tabela (extrato_comissoes),
+    // então ambos verificam duplicidade de forma independente por tipo.
+    try {
+      const checkResp = await fetch(
+        `/api/upload?tipo=${fileType.toUpperCase()}&mes=${selectedMonth}&ano=${selectedYear}`
+      );
+      const checkData = await checkResp.json();
+      if (checkData.existe) {
+        setFileError(
+          `Já existe um arquivo de ${fileType === 'extrato' ? 'Extrato' : 'Recálculo'} importado para ${MONTHS.find(m => m.value === selectedMonth)?.label}/${selectedYear}. Remova o existente antes de reimportar.`
+        );
+        return;
+      }
+    } catch {
+      // Se a verificação falhar por rede, deixa o upload prosseguir e a API
+      // tratará o erro de constraint do banco se houver.
+    }
+
     setIsProcessing(true);
     setProgress(0);
+
     const interval = setInterval(() => {
       setProgress(p => {
-        if (p >= 90) { clearInterval(interval); processFile(); return 100; }
+        if (p >= 90) {
+          clearInterval(interval);
+          processFile();
+          return 95;
+        }
         return p + 15;
       });
     }, 300);
   };
 
- const reader = new FileReader();
-reader.onload = (e) => {
-  const data = new Uint8Array(e.target.result);
-  const workbook = XLSX.read(data, { type: 'array' });
-  const primeiraAba = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[primeiraAba];
-  
-  // 1. Lê o arquivo bruto em JSON
-  const dadosJsonBrutos = XLSX.utils.sheet_to_json(worksheet);
+  // CORREÇÃO 1/2/3/6: processFile() agora existe como função real dentro do componente.
+  // Antes: o código estava solto entre handleUpload e o return do JSX, nunca era chamado.
+  // Agora: lê o XLSX, mapeia colunas, envia para /api/upload com os valores reais
+  // de fileType, selectedMonth e selectedYear, e atualiza o histórico corretamente.
+  const processFile = () => {
+    const reader = new FileReader();
 
-  // 2. Faz o mapeamento automático das colunas (Traduz do Excel para o Banco)
-  const dadosMapeados = dadosJsonBrutos.map(linha => ({
-    codigo_parceiro: linha['CÓDIGO PARCEIRO'],
-    login_vendedor: linha['LOGIN VENDEDOR'],
-    cnpj: linha['CNPJ'],
-    nome_rede: linha['NOME REDE'],
-    segmentacao: linha['SEGMENTAÇÃO'],
-    canal: linha['CANAL'],
-    cnpj_cpf_cliente: linha['CNPJ / CPF CLIENTE'],
-    nome_cliente: linha['NOME CLIENTE'],
-    segmento: linha['SEGMENTO'],
-    uf_linha_cliente: linha['UF LINHA / CLIENTE'],
-    operacao: linha['OPERAÇÃO'],
-    movimento_principal: linha['MOVIMENTO PRINCIPAL'],
-    regra_calculo: linha['REGRA DE CÁLCULO'],
-    detalhe_calculo: linha['DETALHE CÁLCULO'],
-    quantidade: linha['QUANTIDADE'],
-    id_comissionamento: linha['ID COMISSIONAMENTO'],
-    ordem_pedido: linha['ORDEM / PEDIDO'],
-    numero_linha: linha['NÚMERO LINHA'],
-    iccid_serial: linha['ICCID / SERIAL'],
-    competencia: linha['COMPETÊNCIA'],
-    data_evento: linha['DATA EVENTO'],
-    data_baixa: linha['DATA BAIXA'],
-    data_ultimo_movimento: linha['DATA ÚLTIMO MOVIMENTO'],
-    dias_suspensao: linha['DIAS SUSPENSÃO'],
-    contagem_baixa: linha['CONTAGEM BAIXA'],
-    subscricao_movel: linha['SUBSCRIÇÃO MÓVEL'],
-    rpon_sva: linha['RPON SVA'],
-    rpon_voz: linha['RPON VOZ'],
-    rpon_bl: linha['RPON BL'],
-    rpon_tv: linha['RPON TV'],
-    codigo_produto_atual: linha['CÓDIGO PRODUTO ATUAL'],
-    produto_atual: linha['PRODUTO ATUAL'],
-    valor_produto_atual: linha['VALOR PRODUTO ATUAL'],
-    valor_desconto: linha['VALOR DESCONTO'],
-    codigo_produto_anterior: linha['CÓDIGO PRODUTO ANTERIOR'],
-    produto_anterior: linha['PRODUTO ANTERIOR'],
-    valor_produto_anterior: linha['VALOR PRODUTO ANTERIOR'],
-    produtos_fixa: linha['PRODUTOS FIXA'],
-    valor_liquido_delta: linha['VALOR LÍQUIDO / DELTA'],
-    fator: linha['FATOR'],
-    indicadores: linha['INDICADORES'],
-    valor_apurado: linha['VALOR APURADO'],
-    rel: linha['REL'],
-    documento_sap: linha['DOCUMENTO SAP'],
-    fornecedor_sap: linha['FORNECEDOR SAP'],
-    item_recalculo: linha['ITEM RECÁLCULO'],
-    motivo_item_recalculo: linha['MOTIVO ITEM RECÁLCULO'],
-    observacao: linha['OBSERVAÇÃO'],
-    chave: linha['CHAVE'],
-    grupo_comissao: linha['GRUPO COMISSÃO'],
-    esteira: linha['ESTEIRA'],
-    tipo_comissao: linha['TIPO COMISSÃO'],
-    consultor: linha['CONSULTOR'],
-    supervisor: linha['SUPERVISOR'],
-    equipe: linha['TIME'], // ← Tradução da coluna "TIME" para "equipe"
-    regional: linha['REGIONAL'],
-    ref_data: linha['REF']
-  }));
+    reader.onload = async (e) => {
+      try {
+        // Lê o buffer do arquivo com SheetJS
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const primeiraAba = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[primeiraAba];
+        const dadosJsonBrutos = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
 
-  // 3. Função REAL de envio para o Banco de Dados
-  console.log("Leitura do Excel concluída! Iniciando envio...");
+        // Mapeamento: colunas do Excel → campos do banco (extrato_comissoes)
+        const dadosMapeados = dadosJsonBrutos.map(linha => ({
+          login_vendedor:          linha['LOGIN VENDEDOR']          ?? '',
+          cnpj:                    linha['CNPJ']                    ?? '',
+          nome_rede:               linha['NOME REDE']               ?? '',
+          segmentacao:             linha['SEGMENTAÇÃO']             ?? '',
+          canal:                   linha['CANAL']                   ?? '',
+          cnpj_cpf_cliente:        linha['CNPJ / CPF CLIENTE']      ?? '',
+          nome_cliente:            linha['NOME CLIENTE']            ?? '',
+          segmento:                linha['SEGMENTO']                ?? '',
+          uf_linha_cliente:        linha['UF LINHA / CLIENTE']      ?? '',
+          operacao:                linha['OPERAÇÃO']                ?? '',
+          movimento_principal:     linha['MOVIMENTO PRINCIPAL']     ?? '',
+          regra_calculo:           linha['REGRA DE CÁLCULO']        ?? '',
+          detalhe_calculo:         linha['DETALHE CÁLCULO']         ?? '',
+          quantidade:              linha['QUANTIDADE']              ?? '',
+          id_comissionamento:      linha['ID COMISSIONAMENTO']      ?? '',
+          ordem_pedido:            linha['ORDEM / PEDIDO']          ?? '',
+          numero_linha:            linha['NÚMERO LINHA']            ?? '',
+          iccid_serial:            linha['ICCID / SERIAL']          ?? '',
+          competencia:             linha['COMPETÊNCIA']             ?? '',
+          data_evento:             linha['DATA EVENTO']             ?? '',
+          data_baixa:              linha['DATA BAIXA']              ?? '',
+          data_ultimo_movimento:   linha['DATA ÚLTIMO MOVIMENTO']   ?? '',
+          dias_suspensao:          linha['DIAS SUSPENSÃO']          ?? '',
+          contagem_baixa:          linha['CONTAGEM BAIXA']          ?? '',
+          subscricao_movel:        linha['SUBSCRIÇÃO MÓVEL']        ?? '',
+          rpon_sva:                linha['RPON SVA']                ?? '',
+          rpon_voz:                linha['RPON VOZ']                ?? '',
+          rpon_bl:                 linha['RPON BL']                 ?? '',
+          rpon_tv:                 linha['RPON TV']                 ?? '',
+          codigo_produto_atual:    linha['CÓDIGO PRODUTO ATUAL']    ?? '',
+          produto_atual:           linha['PRODUTO ATUAL']           ?? '',
+          valor_produto_atual:     linha['VALOR PRODUTO ATUAL']     ?? '',
+          valor_desconto:          linha['VALOR DESCONTO']          ?? '',
+          codigo_produto_anterior: linha['CÓDIGO PRODUTO ANTERIOR'] ?? '',
+          produto_anterior:        linha['PRODUTO ANTERIOR']        ?? '',
+          valor_produto_anterior:  linha['VALOR PRODUTO ANTERIOR']  ?? '',
+          produtos_fixa:           linha['PRODUTOS FIXA']           ?? '',
+          valor_liquido_delta:     linha['VALOR LÍQUIDO / DELTA']   ?? '',
+          fator:                   linha['FATOR']                   ?? '',
+          indicadores:             linha['INDICADORES']             ?? '',
+          valor_apurado:           linha['VALOR APURADO']           ?? '',
+          rel:                     linha['REL']                     ?? '',
+          documento_sap:           linha['DOCUMENTO SAP']           ?? '',
+          fornecedor_sap:          linha['FORNECEDOR SAP']          ?? '',
+          item_recalculo:          linha['ITEM RECÁLCULO']          ?? '',
+          motivo_item_recalculo:   linha['MOTIVO ITEM RECÁLCULO']   ?? '',
+          observacao:              linha['OBSERVAÇÃO']              ?? '',
+          chave:                   linha['CHAVE']                   ?? '',
+          grupo_comissao:          linha['GRUPO COMISSÃO']          ?? '',
+          esteira:                 linha['ESTEIRA']                 ?? '',
+          tipo_comissao:           linha['TIPO COMISSÃO']           ?? '',
+          consultor:               linha['CONSULTOR']               ?? '',
+          supervisor:              linha['SUPERVISOR']              ?? '',
+          equipe:                  linha['TIME']                    ?? '', // TIME → equipe (evita conflito SQL)
+          regional:                linha['REGIONAL']                ?? '',
+          ref:                     linha['REF']                     ?? '',
+        }));
 
-  // Envia os dados para a sua API (Upload.js)
-  fetch('/api/upload', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      tipo_arquivo: 'EXTRATO', // Mude para 'RECALCULO' dependendo do botão que o usuário clicou
-      mes_referencia: '01',    // O ideal é pegar essa variável do selecionador de mês da tela
-      ano_referencia: '2026',  // O ideal é pegar essa variável do selecionador de ano da tela
-      dados: dadosMapeados
-    })
-  })
-  .then(resposta => resposta.json())
-  .then(resultado => {
-    if(resultado.erro) {
-      alert("Erro ao salvar no banco: " + resultado.erro);
-    } else {
-      alert("Planilha importada e salva no banco com sucesso!");
-    }
-  })
-  .catch(erro => {
-    console.error("Erro na comunicação com a API:", erro);
-    alert("Erro de conexão. Verifique se o servidor está rodando.");
-  });
+        // CORREÇÃO 2/3: tipo_arquivo, mes_referencia e ano_referencia agora
+        // usam os valores reais selecionados na tela, não strings fixas.
+        const resposta = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tipo_arquivo:   fileType.toUpperCase(), // 'EXTRATO' ou 'RECALCULO' conforme seleção
+            mes_referencia: selectedMonth,           // ex: '04' — vem do select de mês
+            ano_referencia: selectedYear,            // ex: '2026' — vem do select de ano
+            dados:          dadosMapeados,
+          }),
+        });
 
-};
-reader.readAsArrayBuffer(file);
+        const resultado = await resposta.json();
+
+        if (!resposta.ok || resultado.erro) {
+          showToast(`Erro ao salvar: ${resultado.erro ?? 'Erro desconhecido'}`, 'error');
+          setIsProcessing(false);
+          setProgress(0);
+          return;
+        }
+
+        // Atualiza dados locais para exibição no dashboard
+        if (fileType === 'extrato') setParsedData(dadosMapeados);
+        setActiveCompetencia({ month: selectedMonth, year: parseInt(selectedYear, 10) });
+
+        // CORREÇÃO 6: Registra no histórico — antes nunca era chamado pois
+        // o código estava fora de qualquer função.
+        setUploadHistory(prev => [{
+          id: generateId(),
+          type: fileType,
+          filename: file.name,
+          size: (file.size / 1024 / 1024).toFixed(2),
+          month: selectedMonth,
+          year: selectedYear,
+          datetime: new Date().toLocaleString('pt-BR'),
+          user: loggedUser?.name ?? 'Desconhecido',
+        }, ...prev]);
+
+        setIsProcessing(false);
+        setProgress(100);
+
+        const typeLabel = UPLOAD_TYPES.find(t => t.value === fileType)?.label ?? fileType;
+        if (fileType === 'extrato') {
+          showToast(`${resultado.mensagem ?? `${dadosMapeados.length} linhas importadas com sucesso!`}`);
+          setCurrentView('analysis');
+        } else {
+          showToast(`${typeLabel} importado com sucesso! ${resultado.mensagem ?? ''}`);
+        }
+        setFile(null);
+
+      } catch (erro) {
+        showToast('Não foi possível conectar ao servidor. Verifique sua conexão.', 'error');
+        setIsProcessing(false);
+        setProgress(0);
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
 
   const cy = new Date().getFullYear();
 

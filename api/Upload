@@ -1,53 +1,106 @@
 import { neon } from '@neondatabase/serverless';
 
 export default async function handler(req, res) {
+
+  const sql = neon(process.env.DATABASE_URL);
+
+  // ─────────────────────────────────────────────────────────────────
+  // GET — Verifica se já existe upload do mesmo tipo/mês/ano
+  // Chamado pelo frontend antes de iniciar o processamento.
+  // CORREÇÃO 5: Evita importar o mesmo mês duas vezes.
+  // ─────────────────────────────────────────────────────────────────
+  if (req.method === 'GET') {
+    const { tipo, mes, ano } = req.query;
+
+    if (!tipo || !mes || !ano) {
+      return res.status(400).json({ erro: 'Parâmetros tipo, mes e ano são obrigatórios.' });
+    }
+
+    try {
+      const resultado = await sql`
+        SELECT COUNT(*) AS total
+        FROM extrato_comissoes
+        WHERE tipo_arquivo    = ${tipo.toUpperCase()}
+          AND mes_referencia  = ${mes}
+          AND ano_referencia  = ${ano}
+      `;
+      const total = parseInt(resultado[0].total, 10);
+      return res.status(200).json({ existe: total > 0, total });
+    } catch (erro) {
+      console.error(erro);
+      return res.status(500).json({ erro: 'Erro ao verificar duplicidade.', detalhes: erro.message });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // POST — Recebe e insere os dados no banco
+  // ─────────────────────────────────────────────────────────────────
   if (req.method !== 'POST') {
     return res.status(405).json({ erro: 'Método não permitido' });
   }
 
   try {
-    const sql = neon(process.env.DATABASE_URL);
-    const { tipo_arquivo, dados } = req.body;
+    // CORREÇÃO 2/3: Recebe mes_referencia e ano_referencia enviados pelo frontend
+    // (antes eram ignorados pois o código antigo os enviava mas o INSERT não os usava)
+    const { tipo_arquivo, mes_referencia, ano_referencia, dados } = req.body;
 
     if (!dados || dados.length === 0) {
       return res.status(400).json({ erro: 'Nenhum dado recebido' });
     }
 
-    // Inserção em massa (Bulk Insert) no Neon
-    // Mapeamos os dados do JSON para as colunas da tabela SQL
+    if (!mes_referencia || !ano_referencia) {
+      return res.status(400).json({ erro: 'mes_referencia e ano_referencia são obrigatórios.' });
+    }
+
+    // CORREÇÃO 4: Tabela corrigida de 'base_comissoes' para 'extrato_comissoes'
+    // (nome real da tabela criada no Neon conforme o schema enviado)
     for (const linha of dados) {
       await sql`
-        INSERT INTO base_comissoes (
-          tipo_arquivo, login_vendedor, cnpj, nome_rede, segmentacao, canal, 
-          cnpj_cpf_cliente, nome_cliente, segmento, operacao, movimento_principal, 
-          regra_calculo, detalhe_calculo, quantidade, id_comissionamento, 
-          ordem_pedido, numero_linha, uf_linha_cliente, competencia, data_evento, 
-          data_baixa, data_ultimo_movimento, dias_suspensao, contagem_baixa, 
-          subscricao_movel, rpon_sva, rpon_voz, rpon_bl, rpon_tv, 
-          codigo_produto_atual, produto_atual, valor_produto_atual, valor_desconto, 
-          codigo_produto_anterior, produto_anterior, valor_produto_anterior, 
-          produtos_fixa, valor_liquido_delta, iccid_serial, fator, indicadores, 
-          valor_apurado, rel, documento_sap, fornecedor_sap, item_recalculo, 
-          motivo_item_recalculo, observacao, chave, grupo_comissao, esteira, 
-          tipo_comissao, consultor, supervisor, equipe, regional, ref
+        INSERT INTO extrato_comissoes (
+          tipo_arquivo,
+          mes_referencia,
+          ano_referencia,
+          login_vendedor, cnpj, nome_rede, segmentacao, canal,
+          cnpj_cpf_cliente, nome_cliente, segmento, uf_linha_cliente,
+          operacao, movimento_principal, regra_calculo, detalhe_calculo,
+          quantidade, id_comissionamento, ordem_pedido, numero_linha, iccid_serial,
+          competencia, data_evento, data_baixa, data_ultimo_movimento,
+          dias_suspensao, contagem_baixa,
+          subscricao_movel, rpon_sva, rpon_voz, rpon_bl, rpon_tv,
+          codigo_produto_atual, produto_atual, valor_produto_atual, valor_desconto,
+          codigo_produto_anterior, produto_anterior, valor_produto_anterior,
+          produtos_fixa, valor_liquido_delta, fator, indicadores, valor_apurado,
+          rel, documento_sap, fornecedor_sap,
+          item_recalculo, motivo_item_recalculo, observacao, chave,
+          grupo_comissao, esteira, tipo_comissao,
+          consultor, supervisor, equipe, regional, ref
         ) VALUES (
-          ${tipo_arquivo}, ${linha.login_vendedor}, ${linha.cnpj}, ${linha.nome_rede}, ${linha.segmentacao}, ${linha.canal},
-          ${linha.cnpj_cpf_cliente}, ${linha.nome_cliente}, ${linha.segmento}, ${linha.operacao}, ${linha.movimento_principal},
-          ${linha.regra_calculo}, ${linha.detalhe_calculo}, ${linha.quantidade}, ${linha.id_comissionamento},
-          ${linha.ordem_pedido}, ${linha.numero_linha}, ${linha.uf_linha_cliente}, ${linha.competencia}, ${linha.data_evento},
-          ${linha.data_baixa}, ${linha.data_ultimo_movimento}, ${linha.dias_suspensao}, ${linha.contagem_baixa},
-          ${linha.subscricao_movel}, ${linha.rpon_sva}, ${linha.rpon_voz}, ${linha.rpon_bl}, ${linha.rpon_tv},
-          ${linha.codigo_produto_atual}, ${linha.produto_atual}, ${linha.valor_produto_atual}, ${linha.valor_desconto},
-          ${linha.codigo_produto_anterior}, ${linha.produto_anterior}, ${linha.valor_produto_anterior},
-          ${linha.produtos_fixa}, ${linha.valor_liquido_delta}, ${linha.iccid_serial}, ${linha.fator}, ${linha.indicadores},
-          ${linha.valor_apurado}, ${linha.rel}, ${linha.documento_sap}, ${linha.fornecedor_sap}, ${linha.item_recalculo},
-          ${linha.motivo_item_recalculo}, ${linha.observacao}, ${linha.chave}, ${linha.grupo_comissao}, ${linha.esteira},
-          ${linha.tipo_comissao}, ${linha.consultor}, ${linha.supervisor}, ${linha.equipe}, ${linha.regional}, ${linha.ref}
+          ${tipo_arquivo},
+          ${mes_referencia},
+          ${ano_referencia},
+          ${linha.login_vendedor}, ${linha.cnpj}, ${linha.nome_rede}, ${linha.segmentacao}, ${linha.canal},
+          ${linha.cnpj_cpf_cliente}, ${linha.nome_cliente}, ${linha.segmento}, ${linha.uf_linha_cliente},
+          ${linha.operacao}, ${linha.movimento_principal}, ${linha.regra_calculo}, ${linha.detalhe_calculo},
+          ${linha.quantidade || null}, ${linha.id_comissionamento}, ${linha.ordem_pedido}, ${linha.numero_linha}, ${linha.iccid_serial},
+          ${linha.competencia}, ${linha.data_evento || null}, ${linha.data_baixa || null}, ${linha.data_ultimo_movimento || null},
+          ${linha.dias_suspensao || null}, ${linha.contagem_baixa || null},
+          ${linha.subscricao_movel}, ${linha.rpon_sva || null}, ${linha.rpon_voz || null}, ${linha.rpon_bl || null}, ${linha.rpon_tv || null},
+          ${linha.codigo_produto_atual}, ${linha.produto_atual}, ${linha.valor_produto_atual || null}, ${linha.valor_desconto || null},
+          ${linha.codigo_produto_anterior}, ${linha.produto_anterior}, ${linha.valor_produto_anterior || null},
+          ${linha.produtos_fixa}, ${linha.valor_liquido_delta || null}, ${linha.fator || null}, ${linha.indicadores}, ${linha.valor_apurado || null},
+          ${linha.rel}, ${linha.documento_sap}, ${linha.fornecedor_sap},
+          ${linha.item_recalculo}, ${linha.motivo_item_recalculo}, ${linha.observacao}, ${linha.chave},
+          ${linha.grupo_comissao}, ${linha.esteira}, ${linha.tipo_comissao},
+          ${linha.consultor}, ${linha.supervisor}, ${linha.equipe}, ${linha.regional}, ${linha.ref}
         )
       `;
     }
 
-    return res.status(200).json({ sucesso: true, mensagem: `${dados.length} linhas importadas com sucesso!` });
+    return res.status(200).json({
+      sucesso: true,
+      mensagem: `${dados.length} linhas importadas com sucesso!`
+    });
+
   } catch (erro) {
     console.error(erro);
     return res.status(500).json({ erro: 'Erro ao salvar no banco', detalhes: erro.message });
